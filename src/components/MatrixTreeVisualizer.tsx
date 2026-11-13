@@ -870,6 +870,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
   // Track which Node ID currently has its "รายละเอียดผลประโยชน์" (Benefit Details) popup modal open
   const [expandedBenefitNodeId, setExpandedBenefitNodeId] = useState<number | null>(null);
+  const [expandedBenefitTargetRank, setExpandedBenefitTargetRank] = useState<number | null>(null);
+  const [expandedBenefitReportFallback, setExpandedBenefitReportFallback] = useState<any | null>(null);
+  const pendingNavigateRef = useRef<{ rank: number; nodeId: number } | null>(null);
+  const closeBenefitModal = useCallback(() => {
+    setExpandedBenefitNodeId(null);
+    setExpandedBenefitTargetRank(null);
+    setExpandedBenefitReportFallback(null);
+  }, []);
   const [benefitModalTab, setBenefitModalTab] = useState<
     'all' | 'direct30' | 'level30' | 'vault35' | 'auto_extra'
   >('all');
@@ -5335,25 +5343,47 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
     };
   };
 
-  const navigateToNode = (targetId: number) => {
-    let resolvedNodeId = targetId;
-    if (!activeNodesMap.has(resolvedNodeId)) {
-      const foundByMain = Array.from(activeNodesMap.values()).find(
-        (n) => (!n.isExtraLineage && n.r1MainId === targetId) || n.originMainId === targetId
-      );
-      if (foundByMain) {
-        resolvedNodeId = foundByMain.id;
-      } else {
-        return;
+  const navigateToNode = useCallback(
+    (targetId: number) => {
+      let resolvedNodeId = targetId;
+      const directCandidate = activeNodesMap.get(resolvedNodeId);
+      const isDirectCandidateInCurrentRank =
+        directCandidate && directCandidate.rank === selectedRank;
+
+      if (!isDirectCandidateInCurrentRank) {
+        const foundByMain = Array.from(activeNodesMap.values()).find((n) =>
+          selectedRank === 1
+            ? n.rank === 1 && n.id === targetId
+            : n.rank === selectedRank &&
+              !n.isExtraLineage &&
+              !n.isClone &&
+              !n.isExtraId &&
+              n.r1MainId === targetId
+        );
+        if (foundByMain) {
+          resolvedNodeId = foundByMain.id;
+        } else {
+          return;
+        }
       }
-    }
-    setFocusRootId(resolvedNodeId);
-    setSearchInput(String(targetId));
-    setNavigationHistory((prev) => {
-      if (prev[prev.length - 1] === resolvedNodeId) return prev;
-      return [...prev, resolvedNodeId];
-    });
-  };
+      setFocusRootId(resolvedNodeId);
+      setSearchInput(String(targetId));
+      setNavigationHistory((prev) => {
+        if (prev[prev.length - 1] === resolvedNodeId) return prev;
+        return [...prev, resolvedNodeId];
+      });
+    },
+    [activeNodesMap, selectedRank]
+  );
+
+  useEffect(() => {
+    const pending = pendingNavigateRef.current;
+    if (!pending || pending.rank !== selectedRank) return;
+    const firstNode = activeNodesMap.values().next().value;
+    if (!firstNode || firstNode.rank !== selectedRank) return;
+    pendingNavigateRef.current = null;
+    navigateToNode(pending.nodeId);
+  }, [activeNodesMap, selectedRank, navigateToNode]);
 
   const handleGoBack = () => {
     if (navigationHistory.length > 1) {
@@ -5943,6 +5973,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                           navigateToNode(firstAutoId);
                         } else {
                           setBenefitModalTab('auto_extra');
+                          setExpandedBenefitTargetRank(node.rank || selectedRank);
+                          setExpandedBenefitReportFallback(null);
                           setExpandedBenefitNodeId(node.id);
                         }
                       }}
@@ -5961,6 +5993,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                       type="button"
                       onClick={() => {
                         setBenefitModalTab('auto_extra');
+                        setExpandedBenefitTargetRank(node.rank || selectedRank);
+                        setExpandedBenefitReportFallback(null);
                         setExpandedBenefitNodeId(node.id);
                       }}
                       className="px-1 py-0.2 rounded bg-purple-100 dark:bg-fuchsia-500/20 border border-purple-300 dark:border-fuchsia-400/60 text-purple-800 dark:text-fuchsia-300 hover:bg-purple-200 dark:hover:bg-fuchsia-500/35 font-extrabold flex items-center gap-0.5 cursor-pointer text-[7.5px]"
@@ -6044,6 +6078,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                 setModalUpgradeMessage(null);
                 setModalUpgradeError(null);
                 setBenefitModalTab('all');
+                setExpandedBenefitTargetRank(node.rank || selectedRank);
+                setExpandedBenefitReportFallback(null);
                 setExpandedBenefitNodeId((prev) => (prev === node.id ? null : node.id));
                 fetchPerIdHistoryForModal();
               }}
@@ -6761,7 +6797,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     setFocusRootId(1);
                     setNavigationHistory([1]);
                     setSearchInput('1');
-                    setExpandedBenefitNodeId(null);
+                    closeBenefitModal();
                     setLatestNewNodeAlert(null);
                     setZoomScale(0.55);
                     setRealtimeCountdown(realtimeInterval);
@@ -7133,6 +7169,8 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     setModalUpgradeMessage(null);
                     setModalUpgradeError(null);
                     setBenefitModalTab('all');
+                    setExpandedBenefitTargetRank(selNode.rank || selectedRank);
+                    setExpandedBenefitReportFallback(null);
                     setExpandedBenefitNodeId(selNode.id);
                     fetchPerIdHistoryForModal();
                   }}
@@ -7538,39 +7576,88 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
       {/* ===================================================================== */}
       {/* POPUP MODAL: รายละเอียดผลประโยชน์ & ประวัติของไอดี (เมื่อกดปุ่ม ดูผลประโยชน์ / ดูข้อมูล) */}
       {/* ===================================================================== */}
-      {expandedBenefitNodeId !== null &&
-        (activeNodesMap.has(expandedBenefitNodeId) ||
-          compactSimNodes.some((n) => n.id === expandedBenefitNodeId)) &&
-        (() => {
+      {expandedBenefitNodeId !== null && (() => {
+        const rawActiveNode = activeNodesMap.get(expandedBenefitNodeId);
+        const activeNodeMatchesRank = Boolean(
+          rawActiveNode &&
+            (expandedBenefitTargetRank === null || rawActiveNode.rank === expandedBenefitTargetRank)
+        );
+        const fallbackRep =
+          expandedBenefitReportFallback &&
+          Number(expandedBenefitReportFallback.id) === expandedBenefitNodeId
+            ? expandedBenefitReportFallback
+            : perIdReportsMap.get(expandedBenefitNodeId);
         const simFallback = compactSimNodes.find((n) => n.id === expandedBenefitNodeId);
+        if (!activeNodeMatchesRank && !fallbackRep && !simFallback) {
+          return null;
+        }
+
+        const fallbackIsClone = Boolean(fallbackRep?.isClone ?? simFallback?.isClone);
+        const fallbackIsExtra = Boolean(fallbackRep?.isExtraId) && !fallbackIsClone;
+        const fallbackOriginMainId = fallbackRep
+          ? Number(fallbackRep.originMainId || fallbackRep.id || expandedBenefitNodeId)
+          : simFallback?.originMainId || simFallback?.id || expandedBenefitNodeId;
+        const fallbackR1MainId = fallbackIsExtra
+          ? undefined
+          : fallbackRep
+          ? fallbackIsClone
+            ? fallbackOriginMainId
+            : Number(fallbackRep.id || expandedBenefitNodeId)
+          : simFallback?.r1MainId || simFallback?.originMainId || simFallback?.id || expandedBenefitNodeId;
+
         const modalNode: NonNullable<ReturnType<typeof activeNodesMap.get>> =
-          activeNodesMap.get(expandedBenefitNodeId) ||
+          (activeNodeMatchesRank ? rawActiveNode : undefined) ||
           ({
-            id: simFallback?.id || expandedBenefitNodeId,
-            owner: simFallback?.owner || '0x7B900000000000000000000000000000000042A1',
-            parentId: simFallback?.parentId || 0,
-            leftChild: simFallback?.leftChild || 0,
-            rightChild: simFallback?.rightChild || 0,
-            isClone: Boolean(simFallback?.isClone),
-            rank: selectedRank,
+            id: fallbackRep ? Number(fallbackRep.id) : simFallback?.id || expandedBenefitNodeId,
+            owner:
+              fallbackRep?.owner ||
+              simFallback?.owner ||
+              '0x7B900000000000000000000000000000000042A1',
+            parentId: Number(fallbackRep?.parentId ?? simFallback?.parentId ?? 0),
+            leftChild: Number(fallbackRep?.leftChildR1 ?? simFallback?.leftChild ?? 0),
+            rightChild: Number(fallbackRep?.rightChildR1 ?? simFallback?.rightChild ?? 0),
+            isClone: fallbackIsClone,
+            isExtraId: fallbackIsExtra,
+            isExtraLineage: fallbackIsExtra,
+            isAutoMainId:
+              Boolean(fallbackRep?.isAutoId) && !fallbackIsClone && !fallbackIsExtra,
+            rank: expandedBenefitTargetRank ?? (fallbackRep ? 1 : selectedRank),
             level: 1,
-            isLeft: Boolean(simFallback?.isLeft),
-            originMainId: simFallback?.originMainId || simFallback?.id || expandedBenefitNodeId,
-            r1MainId: simFallback?.r1MainId || simFallback?.originMainId || simFallback?.id || expandedBenefitNodeId,
+            isLeft: fallbackRep
+              ? fallbackRep.side === 'LEFT'
+              : Boolean(simFallback?.isLeft),
+            originMainId: fallbackOriginMainId,
+            r1MainId: fallbackR1MainId,
             directUplineNodeId:
-              simFallback?.id === 1
+              fallbackRep?.directSponsorNodeId !== undefined
+                ? Number(fallbackRep.directSponsorNodeId)
+                : simFallback?.id === 1
                 ? 0
                 : simFallback?.isClone
                 ? simFallback?.originMainId || simFallback?.parentId || 1
                 : simFallback?.parentId || 1,
-            cloneRound: simFallback?.cloneRound || (simFallback?.isClone ? 1 : 0),
-            vaultBalance: 0,
-            upgradeRankPool: 0,
-            autoIdPool: 0,
-            extraIdPool: 0,
-            autoIdCount: 0,
-            extraIdCount: 0,
-            targetMainIdCurrentRank: selectedRank,
+            cloneRound:
+              fallbackRep?.cloneRound ?? simFallback?.cloneRound ?? (fallbackIsClone ? 1 : 0),
+            cloneSequence: fallbackRep?.cloneSequence ?? 0,
+            vaultBalance: Number(fallbackRep?.rankNodesList?.[0]?.nodeVault ?? 0),
+            upgradeRankPool: Number(fallbackRep?.upgradeRankPool ?? 0),
+            newAutoIdPool: Number(fallbackRep?.newAutoIdPool ?? 0),
+            newExtraIdPool: Number(fallbackRep?.newExtraIdPool ?? 0),
+            totalAutoIdCount: Number(fallbackRep?.totalAutoIdCount ?? 0),
+            totalExtraIdCount: Number(fallbackRep?.totalExtraIdCount ?? 0),
+            targetMainIdCurrentRank: Number(
+              fallbackRep?.currentMaxRank ?? (expandedBenefitTargetRank ?? selectedRank)
+            ),
+            directRewardThisNode: Number(fallbackRep?.direct30TotalUsdt ?? 0),
+            unilevelRewardThisNode: Number(
+              fallbackRep?.levelSummary?.thisNodeLevelTotalUsdt ??
+                fallbackRep?.level30TotalUsdt ??
+                0
+            ),
+            directRewardAllNodes: Number(fallbackRep?.direct30TotalUsdt ?? 0),
+            unilevelRewardAllNodes: Number(fallbackRep?.level30TotalUsdt ?? 0),
+            levelSummary: fallbackRep?.levelSummary,
+            isAdminFreeUpgrade: Boolean(fallbackRep?.isAdminFreeUpgrade),
             directCommissionEarned: 0,
             levelCommissionEarned: 0,
             cloneLevelCommissionEarned: 0,
@@ -7580,7 +7667,9 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
             cloneLevelOrderCounts: Array(15).fill(0),
             spawnedCloneIds: [],
             spawnedCloneDetails: [],
-            spawnedAutoIds: [],
+            spawnedAutoIds: Array.isArray(fallbackRep?.autoIdsSpawned)
+              ? fallbackRep.autoIdsSpawned.map((a: any) => Number(a.id))
+              : [],
           } as unknown as NonNullable<ReturnType<typeof activeNodesMap.get>>);
         const targetMainId = modalNode.isExtraLineage
           ? modalNode.directUplineNodeId || 1
@@ -7588,7 +7677,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         const idReport =
           (modalNode.rank === 1 && perIdReportsMap.get(modalNode.id)) ||
           perIdReportsMap.get(targetMainId) ||
-          null;
+          (fallbackRep && Number(fallbackRep.id) === modalNode.id ? fallbackRep : null);
         const mainReport = perIdReportsMap.get(targetMainId) || idReport;
 
         // Sort all history & ID lists by LATEST reference time descending (อ้างอิงเวลาล่าสุด: ใหม่สุด -> เก่าสุด)
@@ -7881,7 +7970,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn"
-            onClick={() => setExpandedBenefitNodeId(null)}
+            onClick={closeBenefitModal}
           >
             <div
               className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-[#0b1022] border-2 border-indigo-500/50 rounded-2xl shadow-[0_25px_70px_rgba(0,0,0,0.9)] p-4 sm:p-6 space-y-4 text-xs"
@@ -7961,7 +8050,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setExpandedBenefitNodeId(null)}
+                  onClick={closeBenefitModal}
                   className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-700 transition cursor-pointer shrink-0"
                   title="ปิดหน้าต่างป๊อปอัพ"
                 >
@@ -7982,7 +8071,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setExpandedBenefitNodeId(null);
+                        closeBenefitModal();
                         openRegisterModal(modalNode.originMainId || modalNode.id, modalNode.id, true);
                       }}
                       className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[11px] flex items-center gap-1 cursor-pointer transition"
@@ -7994,7 +8083,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setExpandedBenefitNodeId(null);
+                        closeBenefitModal();
                         navigateToNode(modalNode.leftChild);
                         setSelectedTreeNodeId(modalNode.leftChild);
                       }}
@@ -8009,7 +8098,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setExpandedBenefitNodeId(null);
+                        closeBenefitModal();
                         openRegisterModal(modalNode.originMainId || modalNode.id, modalNode.id, false);
                       }}
                       className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-[11px] flex items-center gap-1 cursor-pointer transition"
@@ -8021,7 +8110,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        setExpandedBenefitNodeId(null);
+                        closeBenefitModal();
                         navigateToNode(modalNode.rightChild);
                         setSelectedTreeNodeId(modalNode.rightChild);
                       }}
@@ -8992,9 +9081,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                         key={`modal-rn-${rn.rank}-${rn.nodeId}`}
                         type="button"
                         onClick={() => {
-                          setSelectedRank(rn.rank);
+                          if (rn.rank !== selectedRank) {
+                            pendingNavigateRef.current = { rank: rn.rank, nodeId: rn.nodeId };
+                            setSelectedRank(rn.rank);
+                          }
                           setFocusRootId(rn.nodeId);
-                          setExpandedBenefitNodeId(null);
+                          closeBenefitModal();
                         }}
                         className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-indigo-950 border border-slate-700 hover:border-indigo-500/50 text-slate-200 transition cursor-pointer flex items-center justify-between"
                       >
@@ -9016,7 +9108,7 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
               <div className="flex justify-end pt-1">
                 <button
                   type="button"
-                  onClick={() => setExpandedBenefitNodeId(null)}
+                  onClick={closeBenefitModal}
                   className="px-5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-extrabold text-xs shadow-lg cursor-pointer transition"
                 >
                   ปิดหน้าต่างป๊อปอัพ
@@ -9402,13 +9494,25 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                             <>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 {pagedGroupItems.map((rep: any) => {
+                                  const repIdNum = Number(rep.id);
                                   const nodeInActiveRank =
-                                    activeNodesMap.get(Number(rep.id)) ||
-                                    Array.from(activeNodesMap.values()).find(
-                                      (n) =>
-                                        !n.isClone &&
-                                        (n.r1MainId === Number(rep.id) || n.originMainId === Number(rep.id))
-                                    );
+                                    selectedRank === 1
+                                      ? (() => {
+                                          const candidate = activeNodesMap.get(repIdNum);
+                                          return candidate && candidate.rank === 1
+                                            ? candidate
+                                            : undefined;
+                                        })()
+                                      : !rep.isClone && !rep.isExtraId
+                                      ? Array.from(activeNodesMap.values()).find(
+                                          (n) =>
+                                            n.rank === selectedRank &&
+                                            !n.isClone &&
+                                            !n.isExtraId &&
+                                            !n.isExtraLineage &&
+                                            n.r1MainId === repIdNum
+                                        )
+                                      : undefined;
 
                                   const badgeClass = rep.isClone
                                     ? 'bg-[#DCFCE7] text-[#15803D] border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40'
@@ -9643,20 +9747,27 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => {
+                                            const repIdNum = Number(rep.id);
+                                            const hasMatchingNodeInActiveRank = Boolean(nodeInActiveRank);
                                             const targetNodeId = nodeInActiveRank
                                               ? nodeInActiveRank.id
-                                              : Number(rep.id);
+                                              : repIdNum;
+                                            const targetRank = hasMatchingNodeInActiveRank
+                                              ? selectedRank
+                                              : 1;
                                             const curMaxR = Number(rep.currentMaxRank || 1);
                                             setModalUpgradeTargetRank(Math.min(18, curMaxR + 1));
                                             setModalUpgradeMessage(null);
                                             setModalUpgradeError(null);
                                             setBenefitModalTab('all');
-                                            if (!activeNodesMap.has(targetNodeId)) {
+                                            if (!hasMatchingNodeInActiveRank && selectedRank !== 1) {
                                               setSelectedRank(1);
-                                              loadOnChainTree(1);
                                             }
+                                            setExpandedBenefitTargetRank(targetRank);
+                                            setExpandedBenefitReportFallback(rep);
                                             setIsWalletIdsModalOpen(false);
                                             setExpandedBenefitNodeId(targetNodeId);
+                                            fetchPerIdHistoryForModal();
                                           }}
                                           className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#2563EB] hover:bg-blue-700 dark:bg-gradient-to-r dark:from-indigo-600 dark:to-violet-600 dark:hover:from-indigo-500 dark:hover:to-violet-500 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 shadow-xs"
                                         >
@@ -9671,14 +9782,20 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            const targetNodeId = nodeInActiveRank
-                                              ? nodeInActiveRank.id
-                                              : Number(rep.id);
-                                            if (!activeNodesMap.has(targetNodeId)) {
-                                              setSelectedRank(1);
-                                              loadOnChainTree(1);
+                                            const repIdNum = Number(rep.id);
+                                            if (nodeInActiveRank) {
+                                              navigateToNode(nodeInActiveRank.id);
+                                            } else {
+                                              if (selectedRank !== 1) {
+                                                pendingNavigateRef.current = {
+                                                  rank: 1,
+                                                  nodeId: repIdNum,
+                                                };
+                                                setSelectedRank(1);
+                                              } else {
+                                                navigateToNode(repIdNum);
+                                              }
                                             }
-                                            navigateToNode(targetNodeId);
                                             setIsWalletIdsModalOpen(false);
                                           }}
                                           className="py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[#0F172A] border border-slate-200/80 dark:bg-slate-900 dark:hover:bg-slate-800 dark:text-amber-300 dark:border-slate-700 font-bold text-[11px] transition cursor-pointer"
@@ -11036,10 +11153,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         onClick={() => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
+                                            pendingNavigateRef.current = { rank: 1, nodeId: item.id };
                                             setSelectedRank(1);
-                                            loadOnChainTree(1);
+                                          } else {
+                                            navigateToNode(item.id);
                                           }
-                                          navigateToNode(item.id);
                                         }}
                                         className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/50 text-amber-200 font-bold text-[10.5px] cursor-pointer transition"
                                       >
@@ -11051,9 +11169,12 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== 1) {
                                             setSelectedRank(1);
-                                            loadOnChainTree(1);
                                           }
                                           setBenefitModalTab('all');
+                                          setExpandedBenefitTargetRank(1);
+                                          setExpandedBenefitReportFallback(
+                                            perIdReportsMap.get(item.id) || null
+                                          );
                                           setExpandedBenefitNodeId(item.id);
                                         }}
                                         className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-400/50 text-indigo-200 font-bold text-[10.5px] cursor-pointer transition"
@@ -11184,10 +11305,14 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                         onClick={() => {
                                           setIsAutoExtraAlertModalOpen(false);
                                           if (selectedRank !== item.rank) {
+                                            pendingNavigateRef.current = {
+                                              rank: item.rank,
+                                              nodeId: item.id,
+                                            };
                                             setSelectedRank(item.rank);
-                                            loadOnChainTree(item.rank);
+                                          } else {
+                                            navigateToNode(item.id);
                                           }
-                                          navigateToNode(item.id);
                                         }}
                                         className="px-2.5 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/35 border border-red-400/50 text-red-200 font-bold text-[10.5px] cursor-pointer transition"
                                       >
@@ -11332,10 +11457,11 @@ export const MatrixTreeVisualizer: React.FC<MatrixTreeVisualizerProps> = ({
                                   onClick={() => {
                                     setIsAutoExtraAlertModalOpen(false);
                                     if (selectedRank !== 1) {
+                                      pendingNavigateRef.current = { rank: 1, nodeId: p.mainId };
                                       setSelectedRank(1);
-                                      loadOnChainTree(1);
+                                    } else {
+                                      navigateToNode(p.mainId);
                                     }
-                                    navigateToNode(p.mainId);
                                   }}
                                   className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/40 text-cyan-200 font-bold text-[10px] cursor-pointer"
                                 >
